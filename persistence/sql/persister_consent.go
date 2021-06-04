@@ -447,6 +447,8 @@ func (p *Persister) FlushInactiveLoginConsentRequests(ctx context.Context, notAf
 	var cr consent.ConsentRequest
 	var crh consent.HandledConsentRequest
 
+	var ls consent.LoginSession
+
 	return p.transaction(ctx, func(ctx context.Context, c *pop.Connection) error {
 
 		// Delete all entries (and their FK)
@@ -516,6 +518,34 @@ func (p *Persister) FlushInactiveLoginConsentRequests(ctx context.Context, notAf
 				(&crh).TableName()),
 			time.Now().Add(-p.config.ConsentRequestMaxAge()),
 			notAfter).Exec()
+
+		if err != nil {
+			return sqlcon.HandleError(err)
+		}
+
+		err = p.Connection(ctx).RawQuery(fmt.Sprintf(`
+		DELETE
+		FROM %[1]s
+		WHERE NOT EXISTS
+			(
+			SELECT NULL
+			FROM %[2]s
+			WHERE %[2]s.login_session_id = %[1]s.id
+			)
+		AND NOT EXISTS
+			(
+			SELECT NULL
+			FROM %[3]s
+			WHERE %[3]s.login_session_id = %[1]s.id
+			)
+		AND authenticated_at < ?
+		AND authenticated_at < ?
+		`,
+		(&ls).TableName(),
+		(&lr).TableName(),
+		(&cr).TableName()),
+		time.Now().Add(-p.config.ConsentRequestMaxAge()),
+		notAfter).Exec()
 
 		return sqlcon.HandleError(err)
 	})
